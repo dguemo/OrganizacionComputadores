@@ -1,5 +1,5 @@
-**Organización de computadores**
-**Proyecto 2**
+*Organización de computadores*
+Proyecto 2#
 
 
 ** 2026-1**
