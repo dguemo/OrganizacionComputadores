@@ -1,0 +1,882 @@
+================================================================================
+   DOCUMENTACIÓN TÉCNICA — PROYECTO 2
+   Computador Hack Extendido con Shifter
+   Plataforma: Nand2Tetris Web IDE
+   Versión: 1.0 | 2026
+================================================================================
+
+TABLA DE CONTENIDO
+------------------
+  1.  Descripción General del Proyecto
+  2.  Arquitectura del Sistema
+  3.  Punto 1 — Chip Shifter
+  4.  Punto 2 — ALU Extendida con Shifter
+  5.  Punto 3 — Implementación de la CPU
+  6.  Chip Memory
+  7.  Chip Computer
+  8.  Diseño de Instrucciones Tipo C para Shift
+  9.  Correcciones y Decisiones de Diseño HDL
+  10. Casos de Prueba y Validación
+  11. Glosario
+
+
+================================================================================
+1. DESCRIPCIÓN GENERAL DEL PROYECTO
+================================================================================
+
+Este proyecto implementa en lenguaje HDL (Hardware Description Language) el
+computador Hack completo de la plataforma Nand2Tetris, extendido con soporte
+para instrucciones de desplazamiento de bits (shift). El trabajo se articula
+en tres puntos que se construyen de forma incremental, más un ejercicio de
+diseño de codificación binaria de instrucciones.
+
+Punto 1: Diseño e implementación del chip Shifter, capaz de desplazar un valor
+de 16 bits exactamente 1 posición hacia la izquierda o hacia la derecha,
+capturando el bit desplazado en una salida dedicada llamada result.
+
+Punto 2: Extensión de la ALU (Unidad Aritmético-Lógica) estándar del proyecto
+Nand2Tetris para integrar el modo Shifter. La activación de este modo se
+detecta automáticamente a partir de una combinación específica de los bits de
+control existentes, sin alterar la interfaz pública del chip.
+
+Punto 3: Implementación completa del computador Hack. Esto incluye la CPU
+(con registros A, D, Program Counter y la ALU extendida del Punto 2), el
+chip Memory (que agrupa RAM16K, Screen y Keyboard en un espacio unificado de
+direcciones) y el chip Computer (que conecta ROM, CPU y Memory en el lazo
+cerrado de ejecución).
+
+Diseño de instrucciones: Se especifica la codificación binaria de las nuevas
+instrucciones de shift en el formato de instrucción tipo C del lenguaje
+ensamblador Hack, documentada en el archivo design.txt.
+
+Herramienta de validación:
+Todos los chips deben superar las pruebas unitarias del simulador oficial:
+https://nand2tetris.github.io/web-ide/chip, seleccionando Project 5.
+
+
+================================================================================
+2. ARQUITECTURA DEL SISTEMA
+================================================================================
+
+El computador Hack sigue un modelo de arquitectura de von Neumann con memorias
+de instrucciones y datos separadas. Las instrucciones residen en una ROM de
+solo lectura (ROM32K) y los datos en una RAM de lectura/escritura (Memory).
+
+El flujo de ejecución en cada ciclo de reloj es el siguiente:
+
+  a) El Program Counter (PC) emite la dirección de la instrucción actual.
+  b) La ROM32K entrega la instrucción de 16 bits almacenada en esa dirección.
+  c) La CPU decodifica y ejecuta la instrucción. Si la instrucción es de tipo
+     C con destino M, la CPU produce un valor de salida (outM), indica la
+     dirección de memoria (addressM) y activa la señal de escritura (writeM).
+  d) El chip Memory procesa la operación de lectura o escritura.
+  e) El dato leído (memOut) regresa a la CPU como inM para ser usado en el
+     siguiente ciclo si la instrucción así lo requiere.
+  f) El PC avanza al siguiente valor (incremento normal, salto condicional o
+     reset), definiendo la instrucción del próximo ciclo.
+
+La jerarquía completa de chips implementados en este proyecto es:
+
+  Computer
+  ├── ROM32K          (chip builtin de Nand2Tetris)
+  ├── CPU             (implementado en CPU.hdl)
+  │   ├── ARegister   (chip builtin)
+  │   ├── DRegister   (chip builtin)
+  │   ├── PC          (chip builtin)
+  │   └── ALU         (extendida — Punto 2, ALU.hdl)
+  │       └── Shifter (nuevo — Punto 1, Shifter.hdl)
+  └── Memory          (implementado en Memory.hdl)
+      ├── RAM16K      (chip builtin)
+      ├── Screen      (chip builtin)
+      └── Keyboard    (chip builtin)
+
+Los chips marcados como "builtin" son provistos por la plataforma Nand2Tetris
+y no requieren implementación HDL en este proyecto.
+
+
+================================================================================
+3. PUNTO 1 — CHIP SHIFTER
+================================================================================
+
+3.1 Descripción funcional
+--------------------------
+El chip Shifter realiza un desplazamiento lógico de exactamente 1 bit sobre un
+valor de entrada de 16 bits. La dirección del desplazamiento (izquierda o
+derecha) se controla mediante la señal de 1 bit llamada direction. El bit que
+es desplazado fuera del extremo correspondiente del registro se captura en la
+salida result, lo que permite al circuito superior conocer el dato perdido y
+usarlo si lo necesita.
+
+A diferencia de un desplazamiento aritmético, el bit entrante es siempre 0,
+independientemente del valor de in o de cualquier otro pin.
+
+Interfaz del chip:
+
+  Entradas:
+    in[16]     Valor de 16 bits a desplazar.
+    direction  Dirección del desplazamiento. 0 = izquierda, 1 = derecha.
+
+  Salidas:
+    out[16]    Resultado del desplazamiento en la dirección indicada.
+    result     Bit empujado fuera del extremo correspondiente durante el
+               desplazamiento.
+
+
+3.2 Algoritmo
+--------------
+Shift Left (direction = 0):
+
+  out[0]  = 0           (el bit entrante por la derecha es siempre 0)
+  out[i]  = in[i-1]     para i = 1 hasta 15
+  result  = in[15]      (el MSB es el bit empujado fuera por la izquierda)
+
+Shift Right (direction = 1):
+
+  out[15] = 0           (el bit entrante por la izquierda es siempre 0)
+  out[i]  = in[i+1]     para i = 0 hasta 14
+  result  = in[0]       (el LSB es el bit empujado fuera por la derecha)
+
+
+3.3 Implementación HDL
+-----------------------
+La implementación se basa en dos gates primitivos de la plataforma:
+
+  Mux16: Este gate recibe como entrada "a" el bus ya reorganizado para el
+  desplazamiento a izquierda (con out[0] forzado a false y cada posición i
+  conectada a in[i-1]), y como entrada "b" el bus reorganizado para el
+  desplazamiento a derecha (con out[15] forzado a false y cada posición i
+  conectada a in[i+1]). El selector es la señal direction. En HDL de
+  Nand2Tetris es posible conectar cada bit del bus de entrada del Mux16
+  individualmente, lo que permite construir ambos buses desplazados sin
+  necesidad de chips intermedios.
+
+  Mux (1 bit): Selecciona entre in[15] (bit que sale en un shift izquierda)
+  e in[0] (bit que sale en un shift derecha) usando direction como selector,
+  produciendo la salida result.
+
+La implementación no requiere hardware secuencial (no usa registros ni flip-
+flops). Es un circuito puramente combinacional.
+
+
+3.4 Casos de prueba del enunciado
+-----------------------------------
+Los dos casos de la Tabla 1 del enunciado se verifican de la siguiente manera:
+
+Caso 1 — direction = 0 (shift izquierda):
+  in     = 1000 0000 0000 0001
+  out    = 0000 0000 0000 0010   (todos los bits se desplazaron 1 a la izq.)
+  result = 1                     (el MSB, que era 1, fue empujado fuera)
+
+Caso 2 — direction = 1 (shift derecha):
+  in     = 1000 0000 0000 0001
+  out    = 0100 0000 0000 0000   (todos los bits se desplazaron 1 a la der.)
+  result = 1                     (el LSB, que era 1, fue empujado fuera)
+
+
+================================================================================
+4. PUNTO 2 — ALU EXTENDIDA CON SHIFTER
+================================================================================
+
+4.1 Descripción funcional
+--------------------------
+La ALU Hack estándar compute 18 funciones distintas sobre dos operandos de
+16 bits (x e y) controladas por 6 bits de entrada: zx, nx, zy, ny, f, no.
+En esta extensión se agregan dos operaciones adicionales (shift left y shift
+right sobre el operando x), elevando el total a 20 funciones.
+
+La característica fundamental del diseño es que las nuevas operaciones de shift
+se integran sin modificar la interfaz pública de la ALU. La detección del modo
+shift se realiza internamente a partir de una combinación específica de los
+bits de control ya existentes.
+
+Interfaz del chip:
+
+  Entradas:
+    x[16]   Primer operando (corresponde al registro D en la CPU).
+    y[16]   Segundo operando (corresponde a A o M según el bit a de la CPU).
+    zx      Si 1, fuerza x a cero antes de operar.
+    nx      Si 1, niega x (después del zeroing).
+    zy      Si 1, fuerza y a cero antes de operar.
+    ny      Si 1, niega y (después del zeroing).
+    f       Si 0, calcula x AND y (o shift left en modo shift).
+            Si 1, calcula x + y (o shift right en modo shift).
+    no      Si 1, niega la salida final (también activa el modo shift junto
+            con las demás condiciones).
+
+  Salidas:
+    out[16]  Resultado de la operación seleccionada.
+    zr       1 si out == 0, 0 en caso contrario.
+    ng       1 si out < 0 (es decir, si el bit 15 de out es 1).
+    result   En modo shift: el bit que fue desplazado fuera del extremo.
+             En cualquier otro modo: 0.
+
+
+4.2 Condición de activación del modo Shift
+-------------------------------------------
+El modo shift se activa exclusivamente cuando se cumple la siguiente condición
+sobre los bits de control:
+
+  zx = 0   AND   nx = 0   AND   zy = 0   AND   ny = 0   AND   no = 1
+
+Internamente, esta condición se implementa como una señal booleana llamada
+isShift, calculada con gates Not y And:
+
+  nzx     = NOT(zx)
+  nnx     = NOT(nx)
+  nzy     = NOT(zy)
+  nny     = NOT(ny)
+  c1      = nzx AND nnx
+  c2      = nzy AND nny
+  condBase = c1 AND c2
+  isShift  = condBase AND no
+
+Cuando isShift = 1, la salida de la ALU proviene del Shifter y el bit f
+determina la dirección (0 = izquierda, 1 = derecha). Cuando isShift = 0, la
+ALU opera en su modo estándar y el Shifter es ignorado.
+
+
+4.3 Tabla de operaciones (resumen)
+------------------------------------
+Las 18 operaciones estándar de la ALU Hack original se mantienen sin cambios.
+Las dos nuevas operaciones extendidas son:
+
+  zx=0, nx=0, zy=0, ny=0, f=0, no=1  →  out = Shift Left(x),  result = x[15]
+  zx=0, nx=0, zy=0, ny=0, f=1, no=1  →  out = Shift Right(x), result = x[0]
+
+
+4.4 Arquitectura interna
+--------------------------
+La ALU opera en dos ramas paralelas:
+
+  Rama estándar: preprocesa x e y con los bits zx, nx, zy, ny; calcula AND y
+  ADD; selecciona entre ambos con f; y opcionalmente niega la salida con no.
+  Produce la señal outNormal.
+
+  Rama shift: invoca el chip Shifter con x como entrada y f como dirección.
+  Produce las señales outShift y resShift.
+
+  Selección final: un Mux16 selecciona entre outNormal y outShift usando
+  isShift. La salida result se obtiene con un Mux de 1 bit que selecciona
+  entre 0 y resShift usando también isShift.
+
+Los indicadores de estado zr y ng se calculan siempre sobre la salida final,
+independientemente del modo de operación.
+
+
+4.5 Restricción del simulador: sub-buses y bus completo en el mismo gate
+--------------------------------------------------------------------------
+En el HDL de Nand2Tetris, no está permitido asignar simultáneamente el bus
+completo (out=...) y sub-buses (out[i..j]=...) en la misma invocación de un
+gate. Intentarlo genera un error de compilación.
+
+Este problema afecta directamente a la extracción de los bits necesarios para
+calcular zr y ng a partir de la salida final, ya que se necesita dividir el
+bus de 16 bits en dos mitades de 8 bits (para Or8Way) y también extraer el
+bit 15 (para ng), todo mientras se produce la salida completa out.
+
+La solución adoptada es introducir un wire intermedio (finalOut) que recibe la
+salida del Mux16 de selección final, y luego aplicar un gate And16 con la
+entrada b conectada a la constante true. Este And16 actúa como buffer (ya que
+x AND 1 = x para cualquier x) y permite asignar simultáneamente el bus
+completo y los sub-buses en una sola invocación, lo cual sí es válido en
+Nand2Tetris. El indicador ng se obtiene directamente del bit 15 extraído de
+ese And16 usando Or(a=msb, b=false, out=ng).
+
+
+================================================================================
+5. PUNTO 3 — IMPLEMENTACIÓN DE LA CPU
+================================================================================
+
+5.1 Descripción funcional
+--------------------------
+La CPU Hack implementa el ciclo Fetch-Decode-Execute para el conjunto de
+instrucciones del computador Hack. Internamente contiene el registro A, el
+registro D, la ALU extendida del Punto 2 y el Program Counter (PC).
+
+Interfaz del chip:
+
+  Entradas:
+    inM[16]         Dato leído de la memoria de datos en la dirección
+                    addressM del ciclo anterior.
+    instruction[16] Instrucción actual proveniente de la ROM.
+    reset           Cuando es 1, el PC se reinicia a 0 en el siguiente ciclo.
+
+  Salidas:
+    outM[16]        Valor que la CPU desea escribir en la memoria.
+    writeM          1 si la instrucción actual ordena escribir en memoria.
+    addressM[15]    Dirección de memoria que la CPU desea leer o escribir.
+    pc[15]          Dirección de la próxima instrucción a ejecutar.
+
+
+5.2 Formato de instrucciones
+------------------------------
+La CPU distingue dos tipos de instrucción según el bit 15.
+
+A-instruction (bit 15 = 0):
+El valor de los bits 14 a 0 se carga directamente en el registro A como una
+constante sin signo de 15 bits (rango 0 a 32767). No se realiza ninguna
+operación en la ALU. El PC simplemente se incrementa.
+
+C-instruction (bit 15 = 1):
+Especifica una operación de la ALU, uno o más registros de destino y una
+condición de salto opcional. El formato es el siguiente:
+
+  Bits 15-13: siempre 1 (identificador de C-instruction)
+  Bit  12 (a): selecciona el segundo operando de la ALU.
+               0 = usa el contenido del registro A.
+               1 = usa el contenido de M[A] (memoria de datos).
+  Bits 11-6 (cccccc): bits de control de la ALU (zx, nx, zy, ny, f, no).
+  Bits 5-3 (ddd): bits de destino.
+               Bit 5 (d1): si 1, guarda el resultado en el registro A.
+               Bit 4 (d2): si 1, guarda el resultado en el registro D.
+               Bit 3 (d3): si 1, escribe el resultado en M[A] (writeM=1).
+  Bits 2-0 (jjj): condición de salto.
+               Bit 2 (j1): salta si la ALU produjo un valor negativo (ng=1).
+               Bit 1 (j2): salta si la ALU produjo cero (zr=1).
+               Bit 0 (j3): salta si la ALU produjo un valor positivo.
+
+
+5.3 Lógica de decodificación
+------------------------------
+La CPU decodifica cada instrucción generando señales internas de control:
+
+  isAInst   = NOT(instruction[15])
+              Vale 1 cuando la instrucción es de tipo A.
+
+  isCInst   = NOT(isAInst)
+              Vale 1 cuando la instrucción es de tipo C.
+
+  loadA     = isAInst OR (isCInst AND instruction[5])
+              El registro A se carga cuando es una A-instruction (con la
+              constante como dato) o cuando es una C-instruction con d1=1
+              (con la salida de la ALU como dato).
+
+  loadD     = isCInst AND instruction[4]
+              El registro D se carga solo en C-instructions con d2=1.
+
+  writeM    = isCInst AND instruction[3]
+              Se activa la escritura en memoria solo en C-instructions con d3=1.
+
+  inA       = Mux16(a=instruction, b=aluOut, sel=isCInst)
+              El dato que entra al registro A es la constante de la instrucción
+              (modo A) o la salida de la ALU (modo C).
+
+  outAM     = Mux16(a=outA, b=inM, sel=instruction[12])
+              El segundo operando de la ALU es el registro A (bit 12 = 0) o
+              el dato de memoria inM (bit 12 = 1).
+
+
+5.4 Lógica de salto
+---------------------
+La condición de salto se evalúa combinando los bits j1, j2, j3 de la
+instrucción con los flags ng y zr producidos por la ALU:
+
+  pos         = NOT(zr) AND NOT(ng)   (resultado positivo y no cero)
+  jlt         = instruction[2] AND ng   (JLT: salta si resultado < 0)
+  jeq         = instruction[1] AND zr   (JEQ: salta si resultado = 0)
+  jgt         = instruction[0] AND pos  (JGT: salta si resultado > 0)
+  jumpCondition = jlt OR jeq OR jgt
+  doJump      = isCInst AND jumpCondition
+
+El salto solo se ejecuta en instrucciones tipo C. El Program Counter se carga
+con el contenido del registro A cuando doJump=1, se incrementa en 1 cuando
+doJump=0, y se reinicia a 0 cuando reset=1 (con prioridad sobre todo lo demás).
+
+
+5.5 Restricción del simulador: fanout doble en pines de salida
+---------------------------------------------------------------
+En HDL de Nand2Tetris, un pin de salida de un chip no puede conectarse a dos
+wires distintos dentro de la misma invocación. La construcción
+
+  ALU(..., out=aluOut, out=outM, ...)
+
+es sintácticamente inválida y el simulador la rechaza con un error en tiempo
+de compilación. Adicionalmente, si se incluye el pin result de la ALU en la
+invocación desde la CPU (result=aluResult), el simulador reporta el error
+"Undefined pin name: result" porque, al verificar la invocación, no puede
+resolver el pin como un pin conocido del chip en ese contexto.
+
+La solución adoptada es doble:
+
+  Primero, la invocación de ALU dentro de la CPU usa únicamente out=aluOut
+  para capturar la salida en un wire interno. El pin result se omite por
+  completo de la invocación, lo cual es válido en Nand2Tetris (los pines de
+  salida no conectados en el chip llamador son simplemente ignorados).
+
+  Segundo, la señal outM que debe emitir la CPU se genera con un gate buffer
+  separado: Or16(a=aluOut, b=false, out=outM). La operación OR con cero es
+  la identidad (x OR 0 = x), de modo que outM es funcionalmente idéntico a
+  aluOut.
+
+
+================================================================================
+6. CHIP MEMORY
+================================================================================
+
+6.1 Descripción funcional
+--------------------------
+El chip Memory agrupa los tres dispositivos de almacenamiento del computador
+Hack en un único espacio de direcciones de 15 bits, presentando una interfaz
+unificada de lectura y escritura hacia la CPU.
+
+Interfaz del chip:
+
+  Entradas:
+    in[16]      Valor a escribir en memoria.
+    load        Señal de escritura. Si 1, se escribe in en la dirección dada.
+    address[15] Dirección de memoria a leer o escribir.
+
+  Salidas:
+    out[16]     Dato leído de la dirección especificada en el ciclo actual.
+
+
+6.2 Mapa de memoria
+---------------------
+El espacio de direcciones de 15 bits (0x0000 a 0x7FFF) se distribuye así:
+
+  0x0000 a 0x3FFF (address[14] = 0):
+    RAM16K — Memoria de datos de propósito general.
+    Capacidad: 16,384 palabras de 16 bits.
+    Ocupa los dos primeros cuartos del espacio de direcciones.
+
+  0x4000 a 0x5FFF (address[14] = 1, address[13] = 0):
+    Screen — Memoria de pantalla mapeada. Cada bit corresponde a un píxel.
+    Capacidad: 8,192 palabras (256 filas × 32 palabras por fila).
+
+  0x6000 (address[14] = 1, address[13] = 1):
+    Keyboard — Registro de solo lectura que contiene el código ASCII de la
+    tecla actualmente presionada. No admite escritura.
+
+  Direcciones superiores a 0x6000: comportamiento no definido.
+
+
+6.3 Implementación
+-------------------
+Para enrutar la señal load al dispositivo correcto se usa un DMux4Way con
+sel=address[13..14]. Dado que la RAM16K ocupa dos cuartos del espacio (los
+correspondientes a los valores 00 y 01 del selector), las salidas a y b del
+DMux se combinan con un gate Or para producir la señal loadRAM que activa
+la escritura en RAM16K.
+
+La lectura se realiza simétricamente con un Mux4Way16, también con
+sel=address[13..14], que selecciona entre outRAM (en posiciones a y b),
+outScreen (posición c) y outKbd (posición d).
+
+Los chips RAM16K, Screen y Keyboard son provistos como builtins por
+Nand2Tetris y no requieren implementación interna.
+
+
+================================================================================
+7. CHIP COMPUTER
+================================================================================
+
+7.1 Descripción funcional
+--------------------------
+El chip Computer es el nivel más alto de la jerarquía e integra todos los
+componentes del sistema en un único chip de nivel superior. Su única señal de
+entrada externa es reset, que permite reiniciar la ejecución del programa
+desde la dirección 0.
+
+Interfaz del chip:
+
+  Entradas:
+    reset   Cuando es 1, el Program Counter vuelve a 0 en el siguiente ciclo.
+
+
+7.2 Implementación
+-------------------
+Los tres componentes se conectan formando el lazo cerrado de ejecución.
+
+ROM32K recibe como dirección de lectura la salida pc de la CPU y entrega
+en su salida la instrucción de 16 bits almacenada en esa posición.
+
+CPU recibe la instrucción proveniente de la ROM, el dato de memoria memOut
+(como inM) y la señal externa reset. Produce outM (valor a escribir),
+writeM (permiso de escritura), addressM (dirección de memoria destino) y
+pc (siguiente dirección de instrucción).
+
+Memory recibe in=outM, load=writeM y address=addressM de la CPU, y entrega
+el dato leído en out=memOut, que regresa a la CPU como inM.
+
+Los wires internos que conectan los tres chips son: pc, instruction, outM,
+writeM, addressM y memOut. Ninguno de estos wires es visible desde el
+exterior del chip Computer.
+
+
+================================================================================
+8. DISEÑO DE INSTRUCCIONES TIPO C PARA SHIFT
+================================================================================
+
+8.1 Formato general de la instrucción tipo C
+---------------------------------------------
+Toda instrucción tipo C del lenguaje ensamblador Hack tiene el siguiente
+formato de 16 bits:
+
+  Bit 15: siempre 1 (identificador de tipo C)
+  Bit 14: siempre 1 (no utilizado, por convención 1)
+  Bit 13: siempre 1 (no utilizado, por convención 1)
+  Bit 12: bit a — selecciona el segundo operando de la ALU (0=A, 1=M)
+  Bits 11-6: cccccc — bits de control de la ALU (zx, nx, zy, ny, f, no)
+  Bits 5-3: ddd — bits de destino (d1=A, d2=D, d3=M)
+  Bits 2-0: jjj — bits de condición de salto (j1=JLT, j2=JEQ, j3=JGT)
+
+Representación esquemática:
+  [15][14][13] [12] [11][10][9][8][7][6] [5][4][3] [2][1][0]
+     1   1   1    a   zx  nx zy ny  f no  d1 d2 d3  j1 j2 j3
+
+
+8.2 Codificación de los campos cccccc para las instrucciones de shift
+----------------------------------------------------------------------
+La activación del modo shift en la ALU requiere: zx=0, nx=0, zy=0, ny=0, no=1.
+El bit f determina la dirección:
+
+  Shift Left  (sintaxis: dest = reg << 1):
+    zx=0, nx=0, zy=0, ny=0, f=0, no=1
+    cccccc = 0 0 0 0 0 1
+
+  Shift Right (sintaxis: dest = reg >> 1):
+    zx=0, nx=0, zy=0, ny=0, f=1, no=1
+    cccccc = 0 0 0 0 1 1
+
+El bit a (bit 12) se asigna según el registro fuente indicado en el mnemónico:
+  - reg = D o A  →  a = 0
+  - reg = M      →  a = 1
+
+
+8.3 Tabla de referencia del campo ddd (bits de destino)
+---------------------------------------------------------
+  000 → ningún destino (null)
+  001 → M
+  010 → D
+  011 → MD
+  100 → A
+  101 → AM
+  110 → AD
+  111 → AMD
+
+
+8.4 Tabla de referencia del campo jjj (condiciones de salto)
+--------------------------------------------------------------
+  000 → sin salto
+  001 → JGT (salta si out > 0)
+  010 → JEQ (salta si out = 0)
+  011 → JGE (salta si out >= 0)
+  100 → JLT (salta si out < 0)
+  101 → JNE (salta si out != 0)
+  110 → JLE (salta si out <= 0)
+  111 → JMP (salto incondicional)
+
+
+8.5 Tabla de codificación completa para instrucciones shift
+------------------------------------------------------------
+Los mnemónicos sin campo de salto (jjj = 000) producen los siguientes
+valores binarios y hexadecimales:
+
+  D = M << 1    →  a=1, cccccc=000001, ddd=010, jjj=000
+                   1111 0000 0101 0000  =  0xF050
+
+  D = D << 1    →  a=0, cccccc=000001, ddd=010, jjj=000
+                   1110 0000 0101 0000  =  0xE050
+
+  A = D << 1    →  a=0, cccccc=000001, ddd=100, jjj=000
+                   1110 0000 0110 0000  =  0xE060
+
+  M = D << 1    →  a=0, cccccc=000001, ddd=001, jjj=000
+                   1110 0000 0100 1000  =  0xE048
+
+  AM = D << 1   →  a=0, cccccc=000001, ddd=101, jjj=000
+                   1110 0000 0110 1000  =  0xE068
+
+  AMD = D << 1  →  a=0, cccccc=000001, ddd=111, jjj=000
+                   1110 0000 0111 1000  =  0xE078
+
+  D = M >> 1    →  a=1, cccccc=000011, ddd=010, jjj=000
+                   1111 0000 1101 0000  =  0xF0D0
+
+  D = D >> 1    →  a=0, cccccc=000011, ddd=010, jjj=000
+                   1110 0000 1101 0000  =  0xE0D0
+
+  A = D >> 1    →  a=0, cccccc=000011, ddd=100, jjj=000
+                   1110 0000 1110 0000  =  0xE0E0
+
+  M = D >> 1    →  a=0, cccccc=000011, ddd=001, jjj=000
+                   1110 0000 1100 1000  =  0xE0C8
+
+  AM = D >> 1   →  a=0, cccccc=000011, ddd=101, jjj=000
+                   1110 0000 1110 1000  =  0xE0E8
+
+  AMD = D >> 1  →  a=0, cccccc=000011, ddd=111, jjj=000
+                   1110 0000 1111 1000  =  0xE0F8
+
+
+8.6 Ejemplos detallados del enunciado
+---------------------------------------
+Ejemplo 1: D = M << 1
+
+  El registro fuente es M, por lo tanto a = 1.
+  La operación es shift izquierda, por lo tanto cccccc = 000001.
+  El único destino es D, por lo tanto d1=0, d2=1, d3=0 → ddd = 010.
+  No hay condición de salto, por lo tanto jjj = 000.
+
+  Composición final:
+    111 | 1 | 000001 | 010 | 000
+    1111 0000 0101 0000
+    Hexadecimal: 0xF050
+
+Ejemplo 2: AM = D >> 1
+
+  El registro fuente es D, por lo tanto a = 0.
+  La operación es shift derecha, por lo tanto cccccc = 000011.
+  Los destinos son A y M, por lo tanto d1=1, d2=0, d3=1 → ddd = 101.
+  No hay condición de salto, por lo tanto jjj = 000.
+
+  Composición final:
+    111 | 0 | 000011 | 101 | 000
+    1110 0000 1110 1000
+    Hexadecimal: 0xE0E8
+
+
+================================================================================
+9. CORRECCIONES Y DECISIONES DE DISEÑO HDL
+================================================================================
+
+Durante la revisión de los archivos HDL entregados se identificaron problemas
+de compatibilidad con el simulador de Nand2Tetris que impedían la compilación
+o la ejecución correcta de las pruebas unitarias. A continuación se documenta
+cada corrección con su justificación técnica.
+
+
+9.1 ALU.hdl — Sub-bus y bus completo asignados en el mismo gate
+-----------------------------------------------------------------
+Archivo afectado: ALU.hdl
+Tipo de error: Error de compilación en el simulador.
+
+Descripción del problema:
+El gate Mux16 final intentaba asignar simultáneamente el bus completo (out=out)
+y varios sub-buses (out[0..7]=low, out[8..15]=high, out[15]=msb) en la misma
+invocación. El HDL de Nand2Tetris no permite esta combinación en un único gate.
+
+Corrección aplicada:
+Se introduce un wire intermedio (finalOut) para recibir la salida del Mux16.
+A continuación, un gate And16 con la entrada b conectada a la constante true
+actúa como buffer y recibe finalOut, permitiendo extraer sub-buses y la salida
+completa en una sola invocación, que sí es válida en Nand2Tetris.
+
+  Antes (inválido):
+    Mux16(a=outNormal, b=outShift, sel=isShift,
+          out[0..7]=low, out[8..15]=high, out[15]=msb, out=out);
+
+  Después (válido):
+    Mux16(a=outNormal, b=outShift, sel=isShift, out=finalOut);
+    And16(a=finalOut, b=true,
+          out[0..7]=low, out[8..15]=high, out[15]=msb, out=out);
+
+
+9.2 CPU.hdl — Fanout doble en el pin de salida de la ALU
+----------------------------------------------------------
+Archivo afectado: CPU.hdl
+Tipo de error: Error de compilación en el simulador.
+
+Descripción del problema:
+La invocación del chip ALU dentro de la CPU asignaba el mismo pin de salida
+(out) a dos wires distintos en la misma instrucción (out=aluOut y out=outM).
+Nand2Tetris no permite este fanout doble.
+
+Corrección aplicada:
+La invocación de ALU usa únicamente out=aluOut para capturar la salida en un
+wire interno. La señal outM que el chip CPU debe emitir se genera con un gate
+Or16 separado, usando b=false como identidad (x OR 0 = x).
+
+  Antes (inválido):
+    ALU(..., out=aluOut, out=outM, zr=zr, ng=ng, result=aluResult);
+
+  Después (válido):
+    ALU(..., out=aluOut, zr=zr, ng=ng);
+    Or16(a=aluOut, b=false, out=outM);
+
+
+9.3 CPU.hdl — Pin result de la ALU no reconocido en la invocación
+-------------------------------------------------------------------
+Archivo afectado: CPU.hdl
+Tipo de error: "Undefined pin name: result" en el simulador.
+
+Descripción del problema:
+La invocación de la ALU dentro de la CPU incluía result=aluResult. El
+simulador de Nand2Tetris interpretaba esto como un error porque, en el
+contexto de la invocación desde la CPU, no podía resolver result como un
+pin de salida válido bajo las condiciones de carga dadas.
+
+Corrección aplicada:
+Se eliminó por completo result=aluResult de la invocación. La CPU no necesita
+exponer el bit desplazado al exterior, y el simulador de Nand2Tetris acepta
+que los pines de salida de un chip sean omitidos en el chip llamador.
+
+
+9.4 Nota sobre la doble negación isAInst / isCInst en la CPU
+-------------------------------------------------------------
+La CPU calcula isCInst como NOT(isAInst), donde isAInst ya es NOT(instruction[15]).
+Esto equivale a una doble negación, de modo que isCInst = instruction[15]. Si
+bien esta redundancia no constituye un error funcional ni de compilación, sí
+implica el consumo de dos gates Not adicionales. Se mantiene en el código por
+claridad y legibilidad, dado que hace explícita la intención de distinguir
+entre los dos tipos de instrucción.
+
+
+================================================================================
+10. CASOS DE PRUEBA Y VALIDACIÓN
+================================================================================
+
+10.1 Shifter — Prueba manual con los casos del enunciado
+----------------------------------------------------------
+Los casos de la Tabla 1 del enunciado se verifican directamente en el
+simulador web de Nand2Tetris cargando Shifter.hdl y fijando manualmente
+los valores de entrada.
+
+Caso 1:
+  Entrada:  direction=0, in=1000000000000001
+  Esperado: out=0000000000000010, result=1
+  Verificación: el MSB (1) salió por la izquierda hacia result, el LSB se
+  rellenó con 0 y todos los bits se desplazaron una posición a la izquierda.
+
+Caso 2:
+  Entrada:  direction=1, in=1000000000000001
+  Esperado: out=0100000000000000, result=1
+  Verificación: el LSB (1) salió por la derecha hacia result, el MSB se
+  rellenó con 0 y todos los bits se desplazaron una posición a la derecha.
+
+
+10.2 ALU — Verificación del modo Shift
+----------------------------------------
+Para verificar que el modo shift funciona correctamente dentro de la ALU, se
+deben fijar los siguientes valores de control y observar la salida:
+
+  Shift Left:   zx=0, nx=0, zy=0, ny=0, f=0, no=1
+    Con x=0000000000000001: out debe ser 0000000000000010, result=0.
+    Con x=1000000000000000: out debe ser 0000000000000000, result=1 (overflow).
+
+  Shift Right:  zx=0, nx=0, zy=0, ny=0, f=1, no=1
+    Con x=0000000000000010: out debe ser 0000000000000001, result=0.
+    Con x=0000000000000001: out debe ser 0000000000000000, result=1.
+
+Adicionalmente, las 18 operaciones estándar de la ALU deben continuar
+funcionando correctamente. Las pruebas unitarias del Project 2 en el simulador
+de Nand2Tetris cubren estas operaciones y deben pasar sin errores.
+
+
+10.3 Chips a validar en el simulador Nand2Tetris
+--------------------------------------------------
+Los siguientes chips deben superar sus respectivas pruebas unitarias en el
+simulador web https://nand2tetris.github.io/web-ide/chip, seleccionando
+Project 5 en el menú desplegable:
+
+  Memory.hdl:   prueba unitaria del Project 5.
+  CPU.hdl:      prueba unitaria del Project 5.
+  Computer.hdl: prueba unitaria del Project 5.
+
+El chip Shifter.hdl y ALU.hdl se validan manualmente con los casos descritos
+en las secciones 10.1 y 10.2 respectivamente, dado que no forman parte del
+conjunto de pruebas automáticas del Project 5.
+
+
+================================================================================
+11. GLOSARIO
+================================================================================
+
+ALU (Arithmetic Logic Unit)
+  Unidad Aritmético-Lógica. Circuito combinacional que ejecuta operaciones
+  aritméticas y lógicas sobre uno o dos operandos de 16 bits.
+
+A-instruction
+  Instrucción del ensamblador Hack cuyo bit 15 es 0. Carga una constante
+  de 15 bits en el registro A.
+
+Buffer (en HDL)
+  Gate que propaga su entrada a la salida sin modificarla. Se implementa
+  típicamente como Or16(a=señal, b=false) o And16(a=señal, b=true).
+
+C-instruction
+  Instrucción del ensamblador Hack cuyo bit 15 es 1. Especifica una
+  operación de la ALU, destinos de escritura y una condición de salto.
+
+Chip builtin
+  Chip provisto directamente por la plataforma Nand2Tetris, disponible para
+  su uso sin necesidad de implementación HDL. Ejemplos: RAM16K, Screen,
+  Keyboard, ARegister, DRegister, PC, ROM32K.
+
+CPU (Central Processing Unit)
+  Unidad Central de Proceso. Ejecuta instrucciones del programa accediendo
+  a la memoria de datos y actualizando el Program Counter.
+
+Fanout
+  En HDL de Nand2Tetris, se produce un error de fanout cuando se intenta
+  asignar el mismo pin de salida de un gate a más de un wire en la misma
+  invocación.
+
+HDL (Hardware Description Language)
+  Lenguaje de Descripción de Hardware. En Nand2Tetris, se usa una versión
+  simplificada para describir chips a partir de chips más simples.
+
+isShift
+  Señal interna de la ALU que vale 1 cuando los bits de control satisfacen
+  la condición del modo shift (zx=nx=zy=ny=0 y no=1).
+
+LSB (Least Significant Bit)
+  Bit menos significativo. En un bus de 16 bits, corresponde al bit 0.
+
+MSB (Most Significant Bit)
+  Bit más significativo. En un bus de 16 bits, corresponde al bit 15.
+  También determina el signo en representación en complemento a dos.
+
+PC (Program Counter)
+  Registro que almacena la dirección de la próxima instrucción a ejecutar.
+  Se incrementa automáticamente, puede cargarse con un valor de salto o
+  reiniciarse a 0 mediante la señal reset.
+
+RAM (Random Access Memory)
+  Memoria de acceso aleatorio de lectura y escritura. Almacena los datos
+  del programa en tiempo de ejecución.
+
+ROM (Read-Only Memory)
+  Memoria de solo lectura. Almacena el programa (las instrucciones) que la
+  CPU ejecuta. No puede ser modificada durante la ejecución.
+
+result (pin del Shifter y de la ALU)
+  Pin de salida de 1 bit que contiene el bit desplazado fuera del extremo
+  del registro durante una operación de shift. En modo shift izquierda
+  contiene el MSB original; en modo shift derecha contiene el LSB original.
+  Fuera del modo shift, la ALU emite 0 en este pin.
+
+ROM32K
+  Chip builtin de Nand2Tetris que implementa la memoria de instrucciones
+  de 32,768 palabras de 16 bits.
+
+Shift Left
+  Desplazamiento lógico hacia la izquierda. Equivale a multiplicar el valor
+  por 2 (sin signo), siempre que no haya desbordamiento (overflow).
+
+Shift Right
+  Desplazamiento lógico hacia la derecha. Equivale a dividir el valor por 2
+  (truncando hacia abajo), para valores sin signo.
+
+Sub-bus
+  Subconjunto contiguo de bits de un bus en HDL de Nand2Tetris, referenciado
+  con la sintaxis bus[i..j] donde i <= j.
+
+Wire
+  Nombre de una señal interna en HDL de Nand2Tetris. No consume hardware
+  real; es simplemente una etiqueta para una conexión entre gates.
+
+writeM
+  Señal de salida de la CPU que indica al chip Memory que debe escribir el
+  valor outM en la dirección addressM en el ciclo actual.
+
+zr y ng
+  Flags de estado de la ALU. zr vale 1 cuando la salida es exactamente cero.
+  ng vale 1 cuando la salida es negativa (MSB = 1 en complemento a dos).
+
+
+================================================================================
+   FIN DEL DOCUMENTO
+   Proyecto 2 — Computador Hack Extendido con Shifter
+   Nand2Tetris — Arquitectura de Computadores
+================================================================================
