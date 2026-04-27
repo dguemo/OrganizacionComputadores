@@ -1,1 +1,0 @@
-<CPU-external.tst content goes here>

@@ -1,1 +1,0 @@
-<Memory.tst content goes here>

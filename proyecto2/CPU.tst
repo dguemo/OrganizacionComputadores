@@ -1,1 +1,0 @@
-<CPU.tst content goes here>
