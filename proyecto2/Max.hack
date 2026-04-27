@@ -1,0 +1,1 @@
+<Max.hack content goes here>
