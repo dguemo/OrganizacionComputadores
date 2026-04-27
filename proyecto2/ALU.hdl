@@ -1,0 +1,94 @@
+/**
+ * ALU.hdl - Unidad Aritmético Lógica con Shifter integrado.
+ *
+ * Computes out = one of the following functions:
+ *   0, 1, -1, x, y, !x, !y, -x, -y,
+ *   x+1, y+1, x-1, y-1, x+y, x-y, y-x, x&y, x|y
+ *   
+ *   David Guerra Morales
+ *   Thomas Bedoya Rendon
+ */
+
+CHIP ALU {
+    IN
+        x[16], y[16],
+        zx, nx, zy, ny, f, no;
+
+    OUT
+        out[16],
+        zr,
+        ng,
+        result;
+
+    PARTS:
+    // PREPROCESAMIENTO DE X
+    Mux16(a=x, b=false, sel=zx, out=x1);
+    Not16(in=x1, out=notX1);
+    Mux16(a=x1, b=notX1, sel=nx, out=xFinal);
+    // PREPROCESAMIENTO DE Y
+    Mux16(a=y, b=false, sel=zy, out=y1);
+    Not16(in=y1, out=notY1);
+    Mux16(a=y1, b=notY1, sel=ny, out=yFinal);
+
+    // FUNCIÓN ALU ESTÁNDAR
+
+    And16(a=xFinal, b=yFinal, out=andXY);
+    Add16(a=xFinal, b=yFinal, out=addXY);
+    Mux16(a=andXY, b=addXY, sel=f, out=outALU);
+
+
+    Not16(in=outALU, out=notOutALU);
+    Mux16(a=outALU, b=notOutALU, sel=no, out=outNormal);
+
+    // SHIFTER
+   
+    Shifter(in=x, direction=f, out=outShift, result=resShift);
+ 
+    // DETECCIÓN DE CONDICIÓN SHIFT
+ 
+    Not(in=zx, out=nzx);
+    Not(in=nx, out=nnx);
+    Not(in=zy, out=nzy);
+    Not(in=ny, out=nny);
+    And(a=nzx, b=nnx, out=c1);
+    And(a=nzy, b=nny, out=c2);
+    And(a=c1,  b=c2,  out=condBase);
+    And(a=condBase, b=no, out=isShift);
+
+    // ---------------------------------------------------------------
+    // SELECCIÓN FINAL: ALU normal vs Shifter
+    // FIX: se usa un wire intermedio 'finalOut' para luego extraer
+    //      sub-buses en un gate separado (And16 como buffer).
+    //      Nand2Tetris no permite asignar out= y out[i..j]= en el
+    //      mismo gate simultáneamente.
+    // ---------------------------------------------------------------
+    Mux16(a=outNormal, b=outShift, sel=isShift, out=finalOut);
+
+    // Buffer (And16 con true) para extraer sub-buses y la salida final
+    // en una sola invocación, lo cual sí es válido en Nand2Tetris HDL.
+    And16(a=finalOut, b=true,
+          out[0..7]=low,
+          out[8..15]=high,
+          out[15]=msb,
+          out=out);
+
+    // ---------------------------------------------------------------
+    // SALIDA result
+    // Solo propaga resShift cuando estamos en modo shift
+    // ---------------------------------------------------------------
+    Mux(a=false, b=resShift, sel=isShift, out=result);
+
+    // ---------------------------------------------------------------
+    // INDICADORES DE ESTADO
+    // ---------------------------------------------------------------
+    // ng: negativo si MSB == 1
+    // FIX: se conecta msb directamente; ya no se usa And(a=msb, b=true)
+    //      porque msb ya es un bit de salida del And16 anterior.
+    Or(a=msb, b=false, out=ng);
+
+    // zr: 1 si todos los bits son 0
+    Or8Way(in=low,  out=orLow);
+    Or8Way(in=high, out=orHigh);
+    Or(a=orLow, b=orHigh, out=notZr);
+    Not(in=notZr, out=zr);
+}

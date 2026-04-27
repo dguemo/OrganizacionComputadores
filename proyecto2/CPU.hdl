@@ -1,0 +1,72 @@
+/**
+ * CPU.hdl - Central Processing Unit del computador Hack.
+ *
+ * Ejecuta la instrucción actual (instruction) y produce:
+ *   outM      - valor a escribir en memoria
+ *   writeM    - 1 si debe escribir en memoria
+ *   addressM  - dirección de memoria a leer/escribir
+ *   pc        - dirección de la próxima instrucción
+ *
+ * Formato de instrucción Hack:
+ *   A-instruction (bit 15 = 0): carga constante en registro A
+ *   C-instruction (bit 15 = 1): [15][14][13][a][c1..c6][d1..d3][j1..j3]
+ *     bits 12    = a  (0->usa A, 1->usa M como segundo operando de ALU)
+ *     bits 11-6  = zx nx zy ny f no  (control de la ALU)
+ *     bits 5-3   = d1 d2 d3  (destinos: A, D, M)
+ *     bits 2-0   = j1 j2 j3  (condiciones de salto: JLT, JEQ, JGT)
+ */
+
+CHIP CPU {
+    IN  inM[16],         // Valor leído de la memoria (M)
+        instruction[16], // Instrucción actual
+        reset;           // Señal de reset del PC
+
+    OUT outM[16],        // Valor a escribir en memoria
+        writeM,          // 1 si la instrucción escribe en memoria
+        addressM[15],    // Dirección de memoria objetivo
+        pc[15];          // Dirección de la próxima instrucción
+
+    PARTS:
+
+    Not(in=instruction[15], out=isAInst);
+
+    Not(in=isAInst, out=isCInst);
+
+    And(a=isCInst, b=instruction[5], out=isALoadC);
+    Or(a=isAInst, b=isALoadC, out=loadA);
+
+    Mux16(a=instruction, b=aluOut, sel=isCInst, out=inA);
+    ARegister(in=inA, load=loadA, out=outA, out[0..14]=addressM);
+
+    And(a=isCInst, b=instruction[4], out=loadD);
+    DRegister(in=aluOut, load=loadD, out=outD);
+
+    Mux16(a=outA, b=inM, sel=instruction[12], out=outAM);
+
+    ALU(x=outD, y=outAM,
+        zx=instruction[11], nx=instruction[10],
+        zy=instruction[9],  ny=instruction[8],
+        f=instruction[7],   no=instruction[6],
+        out=aluOut,
+        zr=zr, ng=ng);
+
+    Or16(a=aluOut, b=false, out=outM);
+
+    And(a=isCInst, b=instruction[3], out=writeM);
+
+    Not(in=zr, out=notZr);
+    Not(in=ng, out=notNg);
+    And(a=notZr, b=notNg, out=pos);
+
+    And(a=instruction[2], b=ng,  out=jlt); 
+    And(a=instruction[1], b=zr,  out=jeq); 
+    And(a=instruction[0], b=pos, out=jgt); 
+
+    Or(a=jlt, b=jeq, out=jle);
+    Or(a=jle, b=jgt, out=jumpCondition);
+
+    And(a=isCInst, b=jumpCondition, out=doJump);
+
+    Not(in=doJump, out=inc);
+    PC(in=outA, load=doJump, inc=inc, reset=reset, out[0..14]=pc);
+}
