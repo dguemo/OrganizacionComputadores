@@ -1,4 +1,4 @@
 | Nombre               | Rol         | Tareas Asignadas    | % Contrib |
 |----------------------|-------------|---------------------|-----------|
-| Thomas Bedoya Rendon | Líder, Doc  | desarrollo y pruebas|    50%    |
-| David Guerra Morales | Dev, Tester | desarrollo y pruebas|    50%    |
+| Thomas Bedoya Rendon | tester, Doc | desarrollo y pruebas|    30%    |
+| David Guerra Morales | lider, dev  | desarrollo y pruebas|    70%    |
