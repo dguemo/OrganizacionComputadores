@@ -15,9 +15,8 @@ TABLA DE CONTENIDO
   6.  Chip Memory
   7.  Chip Computer
   8.  Diseño de Instrucciones Tipo C para Shift
-  9.  Correcciones y Decisiones de Diseño HDL
-  10. Casos de Prueba y Validación
-  11. Glosario
+  9. Casos de Prueba y Validación
+  10. Glosario
 
 
 ================================================================================
@@ -637,93 +636,7 @@ Ejemplo 2: AM = D >> 1
 
 
 ================================================================================
-9. CORRECCIONES Y DECISIONES DE DISEÑO HDL
-================================================================================
-
-Durante la revisión de los archivos HDL entregados se identificaron problemas
-de compatibilidad con el simulador de Nand2Tetris que impedían la compilación
-o la ejecución correcta de las pruebas unitarias. A continuación se documenta
-cada corrección con su justificación técnica.
-
-
-9.1 ALU.hdl — Sub-bus y bus completo asignados en el mismo gate
------------------------------------------------------------------
-Archivo afectado: ALU.hdl
-Tipo de error: Error de compilación en el simulador.
-
-Descripción del problema:
-El gate Mux16 final intentaba asignar simultáneamente el bus completo (out=out)
-y varios sub-buses (out[0..7]=low, out[8..15]=high, out[15]=msb) en la misma
-invocación. El HDL de Nand2Tetris no permite esta combinación en un único gate.
-
-Corrección aplicada:
-Se introduce un wire intermedio (finalOut) para recibir la salida del Mux16.
-A continuación, un gate And16 con la entrada b conectada a la constante true
-actúa como buffer y recibe finalOut, permitiendo extraer sub-buses y la salida
-completa en una sola invocación, que sí es válida en Nand2Tetris.
-
-  Antes (inválido):
-    Mux16(a=outNormal, b=outShift, sel=isShift,
-          out[0..7]=low, out[8..15]=high, out[15]=msb, out=out);
-
-  Después (válido):
-    Mux16(a=outNormal, b=outShift, sel=isShift, out=finalOut);
-    And16(a=finalOut, b=true,
-          out[0..7]=low, out[8..15]=high, out[15]=msb, out=out);
-
-
-9.2 CPU.hdl — Fanout doble en el pin de salida de la ALU
-----------------------------------------------------------
-Archivo afectado: CPU.hdl
-Tipo de error: Error de compilación en el simulador.
-
-Descripción del problema:
-La invocación del chip ALU dentro de la CPU asignaba el mismo pin de salida
-(out) a dos wires distintos en la misma instrucción (out=aluOut y out=outM).
-Nand2Tetris no permite este fanout doble.
-
-Corrección aplicada:
-La invocación de ALU usa únicamente out=aluOut para capturar la salida en un
-wire interno. La señal outM que el chip CPU debe emitir se genera con un gate
-Or16 separado, usando b=false como identidad (x OR 0 = x).
-
-  Antes (inválido):
-    ALU(..., out=aluOut, out=outM, zr=zr, ng=ng, result=aluResult);
-
-  Después (válido):
-    ALU(..., out=aluOut, zr=zr, ng=ng);
-    Or16(a=aluOut, b=false, out=outM);
-
-
-9.3 CPU.hdl — Pin result de la ALU no reconocido en la invocación
--------------------------------------------------------------------
-Archivo afectado: CPU.hdl
-Tipo de error: "Undefined pin name: result" en el simulador.
-
-Descripción del problema:
-La invocación de la ALU dentro de la CPU incluía result=aluResult. El
-simulador de Nand2Tetris interpretaba esto como un error porque, en el
-contexto de la invocación desde la CPU, no podía resolver result como un
-pin de salida válido bajo las condiciones de carga dadas.
-
-Corrección aplicada:
-Se eliminó por completo result=aluResult de la invocación. La CPU no necesita
-exponer el bit desplazado al exterior, y el simulador de Nand2Tetris acepta
-que los pines de salida de un chip sean omitidos en el chip llamador.
-
-
-9.4 Nota sobre la doble negación isAInst / isCInst en la CPU
--------------------------------------------------------------
-La CPU calcula isCInst como NOT(isAInst), donde isAInst ya es NOT(instruction[15]).
-Esto equivale a una doble negación, de modo que isCInst = instruction[15]. Si
-bien esta redundancia no constituye un error funcional ni de compilación, sí
-implica el consumo de dos gates Not adicionales. Se mantiene en el código por
-claridad y legibilidad, dado que hace explícita la intención de distinguir
-entre los dos tipos de instrucción.
-
-
-================================================================================
-10. CASOS DE PRUEBA Y VALIDACIÓN
+9. CASOS DE PRUEBA Y VALIDACIÓN
 ================================================================================
 
 10.1 Shifter — Prueba manual con los casos del enunciado
@@ -779,7 +692,7 @@ conjunto de pruebas automáticas del Project 5.
 
 
 ================================================================================
-11. GLOSARIO
+10. GLOSARIO
 ================================================================================
 
 ALU (Arithmetic Logic Unit)
