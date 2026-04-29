@@ -24,19 +24,31 @@ class Parser:
     """
     Recorre un archivo .asm instrucción por instrucción.
 
+    Uso típico:
+        parser = Parser("Prog.asm")
+        while parser.has_more_lines():
+            parser.advance()
+            tipo = parser.instruction_type()
+            ...
     """
 
     def __init__(self, filepath: str):
         """
         Abre el archivo y carga todas las líneas válidas (sin comentarios
         ni líneas vacías) junto con su número de línea original en el
-        archivo fuente
+        archivo fuente (útil para reportar errores).
+
+        Args:
+            filepath: Ruta al archivo .asm a leer.
+
+        Raises:
+            FileNotFoundError: Si el archivo no existe.
         """
         self._lines = []          # Lista de (num_linea_original, texto_limpio)
         self._current_index = -1  # Apunta a la instrucción actual
         self._current_line = ""   # Texto limpio de la instrucción actual
 
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, "r", encoding="utf-8-sig") as f:
             for num, raw in enumerate(f, start=1):
                 clean = self._clean(raw)
                 if clean:
@@ -116,6 +128,11 @@ class Parser:
         Para A_INSTRUCTION: devuelve el símbolo o número después del @.
         Para L_INSTRUCTION: devuelve el nombre de la etiqueta sin paréntesis.
 
+        Returns:
+            str: El símbolo extraído.
+
+        Raises:
+            TypeError: Si se llama sobre una instrucción que no es A ni L.
         """
         t = self.instruction_type()
 
