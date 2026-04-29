@@ -292,7 +292,7 @@ class HackDisassembler:
             SyntaxError: Si alguna línea tiene formato inválido.
             KeyError:    Si alguna instrucción no puede decodificarse.
         """
-        with open(self._input_path, "r", encoding="utf-8") as infile, \
+        with open(self._input_path, "r", encoding="utf-8-sig") as infile, \
              open(self._output_path, "w", encoding="utf-8") as outfile:
 
             for line_num, raw_line in enumerate(infile, start=1):
