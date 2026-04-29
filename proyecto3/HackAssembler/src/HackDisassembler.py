@@ -156,21 +156,22 @@ class HackDisassembler:
         value = int(bits[1:], 2)  # bits[1:] son los 15 bits de dirección
         return f"@{value}"
 
-    def _is_shift(self, comp_bits: str, jump_bits: str) -> bool:
+    def _is_shift(self, bits: str) -> bool:
         """
-        Determina si una instrucción C es en realidad una instrucción
-        shift, verificando que:
-            - Los bits comp corresponden a un patrón de shift conocido
-            - Los bits jump son 000 (shift nunca tiene salto)
+        Determina si una instrucción de 16 bits es una instrucción shift.
+
+        En el estándar Nand2Tetris extendido, las instrucciones shift
+        se distinguen de las C estándar por los bits 14 y 13:
+            - C estándar : bits[1:3] == "11"  (1 1 1 ...)
+            - Shift       : bits[1:3] == "10"  (1 0 1 ...)
 
         Args:
-            comp_bits: 7 bits del campo comp.
-            jump_bits: 3 bits del campo jump.
+            bits: Los 16 bits completos de la instrucción.
 
         Returns:
             bool: True si es instrucción shift, False si es C estándar.
         """
-        return comp_bits in self._COMP_SHIFT and jump_bits == "000"
+        return bits[1:3] == "10"
 
     def _decode_shift(self, comp_bits: str, dest_bits: str) -> str:
         """
@@ -256,23 +257,23 @@ class HackDisassembler:
         if bits[0] == "0":
             return self._decode_a(bits)
 
-        # Bits 15-13 = 111 → instrucción tipo C o shift
+        # bits[0:3] == "101" → instrucción SHIFT (extensión Hack)
+        if bits[0:3] == "101":
+            comp_bits = bits[3:10]
+            dest_bits = bits[10:13]
+            return self._decode_shift(comp_bits, dest_bits)
+
+        # bits[0:3] == "111" → instrucción tipo C estándar
         if bits[0:3] == "111":
-            comp_bits = bits[3:10]   # bits 12-6: campo comp (7 bits)
-            dest_bits = bits[10:13]  # bits 5-3:  campo dest (3 bits)
-            jump_bits = bits[13:16]  # bits 2-0:  campo jump (3 bits)
-
-            # ¿Es instrucción shift?
-            if self._is_shift(comp_bits, jump_bits):
-                return self._decode_shift(comp_bits, dest_bits)
-
-            # Instrucción C estándar
+            comp_bits = bits[3:10]
+            dest_bits = bits[10:13]
+            jump_bits = bits[13:16]
             return self._decode_c(comp_bits, dest_bits, jump_bits)
 
         raise SyntaxError(
             f"Línea {line_num}: instrucción no reconocida → '{bits}'. "
-            f"El bit más significativo debe ser 0 (tipo A) "
-            f"o los bits 15-13 deben ser 111 (tipo C/shift)."
+            f"El bit más significativo debe ser 0 (tipo A), "
+            f"'101' (shift) o '111' (tipo C)."
         )
 
     # ------------------------------------------------------------------
