@@ -41,6 +41,7 @@ import os
 from Parser import Parser, A_INSTRUCTION, C_INSTRUCTION, L_INSTRUCTION, SHIFT_INSTRUCTION
 from Code import Code
 from SymbolTable import SymbolTable
+from HackDisassembler import disassemble
 
 
 def first_pass(filepath: str, symbol_table: SymbolTable) -> None:
@@ -161,7 +162,7 @@ def second_pass(filepath: str, symbol_table: SymbolTable, output_path: str) -> N
                         f"Línea {line_num}: error en instrucción shift. {e}"
                     )
 
-                binary = "111" + bits_comp + bits_dest + "000"
+                binary = "101" + bits_comp + bits_dest + "000"
                 out.write(binary + "\n")
 
             # ----------------------------------------------------------
@@ -210,22 +211,32 @@ def assemble(input_path: str) -> str:
 # Punto de entrada del programa
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Uso: python HackAssembler.py <archivo.asm>")
-        sys.exit(1)
+    # Modo desensamblador: python HackAssembler.py -d Prog.hack
+    if len(sys.argv) == 3 and sys.argv[1] == "-d":
+        try:
+            disassemble(sys.argv[2])
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        except (SyntaxError, KeyError, ValueError) as e:
+            print(f"Error de desensamblado: {e}")
+            sys.exit(1)
 
-    input_file = sys.argv[1]
+    # Modo ensamblador: python HackAssembler.py Prog.asm
+    elif len(sys.argv) == 2:
+        input_file = sys.argv[1]
+        try:
+            assemble(input_file)
+            # Si todo fue bien, no se imprime nada (según el enunciado)
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        except (SyntaxError, KeyError, ValueError) as e:
+            print(f"Error de traducción: {e}")
+            sys.exit(1)
 
-    try:
-        output_file = assemble(input_file)
-        # Si todo fue bien, no se imprime nada (según el enunciado)
-
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    except (SyntaxError, KeyError, ValueError) as e:
-        print(f"Error de traducción: {e}")
-        # El archivo de salida se cierra automáticamente por el
-        # context manager (with) en second_pass al lanzar la excepción
+    else:
+        print("Uso:")
+        print("  Ensamblar:    python HackAssembler.py <archivo.asm>")
+        print("  Desensamblar: python HackAssembler.py -d <archivo.hack>")
         sys.exit(1)
